@@ -1,0 +1,227 @@
+---
+title: "Final Project Aoqin Yan"
+output:
+  word_document: default
+  pdf_document: default
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+---
+
+# Load in the data
+
+```{r}
+setwd("~/Desktop/1st semester/1080Data Analysis/project")
+bank = read.csv("BankChurners_edited.csv", header = T)
+
+library(pROC)
+library(class)
+library(ggplot2)
+```
+
+# Portrait for both existing and attrited customers
+
+(a) Is there a significant difference in average ages between existing customers and churn customers?
+
+```{r}
+bank$Attrition_Flag = ifelse(bank$Attrition_Flag == "Existing Customer", 1, 0)
+
+## Performing a t-test
+age_test = t.test(data = bank, Customer_Age ~ Attrition_Flag)
+print(age_test)
+
+# Null Hypothesis: The average age among existing customers and attrited customers are the same. 
+# Alt Hypothesis: The average age among existing customers and attrited customers are NOT the same. 
+
+# T-test results
+  # p-value = 0.05772
+  # 95 percent confidence interval:
+  # -0.01302059  0.80777731
+
+  # sample estimates:
+  # mean in group 0   mean in group 1 
+  #     46.65950        46.26212
+
+# Testing assumptions of the t-test
+  # Normality 
+  qqnorm(bank$Customer_Age[bank$Attrition_Flag == 1], main = "Existing Customers")
+  qqnorm(bank$Customer_Age[bank$Attrition_Flag == 0], main = "Attrited Customers")
+  # Outliers 
+  boxplot(bank$Customer_Age ~ bank$Attrition_Flag, main = "Attrited vs Existing")
+
+# Interpretations:
+  # The p-value = 0.05772 is slightly above the conventional threshold of 0.05
+  # The Q-Q plots of both groups seems to have noticeable diagonal, with some outliers in the existing customer group, which matches the boxplot result. 
+  # Given this is a large dataframe with more than 10,000 datapoints, the slightly higher p-value and some outliers should not affect the statistical significance of the t-test result.
+  # Therefore, we can conclude that the difference in average ages between existing and attrited customers is in between -0.01302059 and 0.80777731 (95% CI). 
+
+```
+
+(b) Does the Total_Revolving_Bal have a statistically significant effect on the likelihood of churn?
+
+```{r}
+## Performing a Chi-squared test
+Balance_table = table(bank$Total_Revolving_Bal, bank$Attrition_Flag)
+Balance_test = chisq.test(Balance_table)
+print(Balance_test)
+
+# Null hypothesis: There is NO association between revolving balance amount and attrition (churn). 
+# Alt hypothesis: There is an association between revolving balance amount and attrition (churn).
+
+# Interpretation:
+ # p-value < 2.2e-16. Therefore, we have evidence to reject the null hypothesis and conclude that there is a statistically significant association between revolving balance amount and the likelihood of churn.
+
+```
+
+# Building a logistic regression model
+
+(a) Can we predict the likelihood of churn using a logistic regression model?
+
+```{r}
+## Preparing the data
+training_index = sample(1:nrow(bank), 0.6 * nrow(bank))
+training_set = bank[training_index, ]
+testing_set = bank[-training_index, ]
+
+## Building the model
+log_md = glm(data = training_set, Attrition_Flag ~ Months_Inactive_12_mon + Total_Revolving_Bal + Total_Trans_Amt + Total_Trans_Ct, family = "binomial")
+
+summary(log_md)
+
+# All variables and the intercept have p-value <2e-16, which indicates  
+
+```
+
+(b) How good is this model on prediction?
+
+```{r}
+predictions = predict(log_md, testing_set, type = "response")
+threshold = 0.5
+predictions_binary = ifelse(predictions > threshold, 1, 0)
+
+conf_matrix = table(Actual = testing_set$Attrition_Flag, Predicted = predictions_binary)
+dimnames(conf_matrix) = list(Actual = c("Actual Churned", "Actual Existing"), Predicted = c("Predicted Churn", "Predicted Existing"))
+
+print(conf_matrix)
+
+TN = conf_matrix[1,1]
+FP = conf_matrix[1,2]
+FN = conf_matrix[2,1]
+TP = conf_matrix[2,2]
+
+# Sensitivity = 0.9580378
+TP / (TP+FN) 
+# Specificity = 0.4362819
+TN / (TN+FP) 
+# Accuracy = 0.8721303
+(TP + TN) / sum(conf_matrix) 
+
+
+## Adjust with a higher threshold so that sensitivity can be lower, and specificity can be higher:
+
+
+new_threshold = 0.75
+predictions_binary = ifelse(predictions > new_threshold, 1, 0)
+
+conf_matrix = table(Actual = testing_set$Attrition_Flag, Predicted = predictions_binary)
+dimnames(conf_matrix) = list(Actual = c("Actual Churned", "Actual Existing"), Predicted = c("Predicted Churn", "Predicted Existing"))
+
+TN = conf_matrix[1,1]
+FP = conf_matrix[1,2]
+FN = conf_matrix[2,1]
+TP = conf_matrix[2,2]
+
+# Sensitivity = 0.8705674
+TP / (TP+FN) 
+# Specificity = 0.7106447
+TN / (TN+FP) 
+# Accuracy = 0.844236
+(TP + TN) / sum(conf_matrix) 
+
+
+## Graphing the Area Under the Curve
+roc_curve = roc(testing_set$Attrition_Flag, predictions)
+print(roc_curve)
+# Area under the curve: 0.879
+plot(roc_curve)
+
+
+# Summary:
+  # The regression model with default threshold (0.5) has a high sensitivity of 95.8% and overall accuracy of 87.21%, yet its specificity remains as low as 43.63%. With the adjusted threshold of 0.75, there is a significant rise in specificity to 71.06%, without affecting the sensitivity and overall accuracy too much. The high specificity can significantly lower the potential false positive, help the bank better identify the true customers that are likely to leave, which can reduce the cost of avoiding customer churn. 
+
+  # Overall, this logistic regression model is quite effective at predicting customer churn. This model can correctly identify 87.06% of the customer churn, 71.06% of the customers who will stay, and has a high overall accuracy of 84.43%. The area under the curve being 0.879 also suggests it has a strong ability to differentiate between churn customer who will churn and those who will not.
+
+
+```
+
+# Building a model by applying knn
+
+(a) How good is this comparing to the logistic regression model?
+
+```{r}
+# Preparing the scaled data:
+factors = c("Months_Inactive_12_mon", "Total_Revolving_Bal", "Total_Trans_Amt", "Total_Trans_Ct")
+
+train_scaled = training_set
+train_scaled[, factors] = scale(training_set[, factors])
+
+test_scaled = testing_set
+test_scaled[, factors] = scale(testing_set[, factors])
+
+# Running KNN with different values of k
+
+accuracy_list = c()
+for (k in 1:20) {
+  knn_pred = knn(train = train_scaled[, factors],
+                  test = test_scaled[, factors],
+                  cl = training_set$Attrition_Flag, k = k)
+  conf_matrix = table(Predicted = knn_pred, Actual = testing_set$Attrition_Flag)
+  accuracy = sum(diag(conf_matrix)) / sum(conf_matrix)
+  accuracy_list = c(accuracy_list, accuracy)
+}
+
+# Find the k value with the highest accuracy
+best_k = which.max(accuracy_list) # 7 
+
+# Final KNN model with the best k
+knn_md = knn(train = train_scaled[, factors],
+                      test = test_scaled[, factors],
+                      cl = training_set$Attrition_Flag, k = best_k)
+
+# Confusion matrix for the final model
+conf_matrix_2 = table(Predicted = knn_md, Actual = testing_set$Attrition_Flag)
+dimnames(conf_matrix_2) = list(Actual = c("Actual Churned", "Actual Existing"), Predicted = c("Predicted Churn", "Predicted Existing"))
+print(conf_matrix_2)
+
+TN = conf_matrix_2[1,1]
+FP = conf_matrix_2[1,2]
+FN = conf_matrix_2[2,1]
+TP = conf_matrix_2[2,2]
+
+# Sensitivity = 0.9371445
+TP / (TP+FN) 
+# Specificity = 0.8336449
+TN / (TN+FP) 
+# Accuracy = 0.9234757
+(TP + TN) / sum(conf_matrix_2) 
+
+```
+
+(b) Based on the models and predictions, what can the bank do to reduce customer churn?
+
+```{r}
+# Graphing the distribution of total transaction amount:
+ggplot(bank, aes(x = Total_Trans_Amt, fill = as.factor(Attrition_Flag))) +
+    geom_histogram(bins = 30, alpha = 0.6, position = "identity") +
+    scale_fill_manual(values = c("black", "lightblue"), 
+                      labels = c("Churned", "Retained")) +
+    labs(x = "Total Transaction Amount", y = "Count", fill = "Customer Status") +
+    ggtitle("Distribution of Total Transaction Amount by Customer Status")
+
+# Graphing total transactions count vs amount
+ggplot(bank, aes(x = Total_Trans_Ct, y = Total_Trans_Amt, color = as.factor(Attrition_Flag))) +
+    geom_point(alpha = 0.6) +
+    scale_color_manual(values = c("black", "lightblue"), 
+                       labels = c("Churned", "Retained")) +
+    labs(x = "Total Transaction Count", y = "Total Transaction Amount", color = "Customer Status") +
+    ggtitle("Total Transactions Count vs Amount by Customer Status")
+
+```
